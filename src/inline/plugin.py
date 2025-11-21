@@ -505,22 +505,30 @@ class ExtractInlineTest(ast.NodeTransformer):
                     if arg_type == None:
                         corr_val_type = True
                         break
-                    if isinstance(arg.value, arg_type):
+                    if isinstance(getattr(arg, value_prop_name), arg_type):
                         corr_val_type = True
                         break
                 
                 if corr_val_type and corr_arg_type:
                     # Accounts for additional checks for REPEATED and TAG_STR arguments
                     if arg_idx == ConstrArgs.REPEATED:
-                        if arg.value <= 0:
+                        value = getattr(arg, value_prop_name)
+                        if value <= 0:
                             raise MalformedException(f"inline test: {self.arg_repeated_str} must be greater than 0")
-                        self.cur_inline_test.repeated = getattr(arg, value_prop_name)
+                        self.cur_inline_test.repeated = value
                     elif arg_idx == ConstrArgs.TAG_STR:
                         tags = []
+                        
+                        if sys.version_info < (3, 8, 0):
+                            elt_type = ast.Str
+                        else:
+                            elt_type = ast.Constant
+                        
                         for elt in arg.elts:
-                            if not (isinstance(elt, ast.Constant) and isinstance(elt.value, str)):
+                            value = getattr(elt, value_prop_name)
+                            if (not isinstance(elt, elt_type) and isinstance(value, str)):
                                 raise MalformedException(f"tag can only be List of string")
-                            tags.append(getattr(elt, value_prop_name))
+                            tags.append(value)
                         self.cur_inline_test.tag = tags
                     # For non-special cases, set the attribute defined by the dictionary
                     else:
