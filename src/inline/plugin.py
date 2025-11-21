@@ -159,6 +159,7 @@ class InlineTest:
         self.check_stmts = []
         self.given_stmts = []
         self.previous_stmts = []
+        self.import_stmts = []
         self.prev_stmt_type = PrevStmtType.StmtExpr
         # the line number of test statement
         self.lineno = 0
@@ -174,11 +175,23 @@ class InlineTest:
         self.devices = None
         self.globs = {}
 
+    def write_imports(self):
+        import_str = ""
+        for n in self.import_stmts:
+              import_str += ExtractInlineTest.node_to_source_code(n) + "\n"
+        return import_str
+
     def to_test(self):
+        prefix = "\n"
+        
+        # for n in self.import_stmts:
+        #     import_str += ExtractInlineTest.node_to_source_code(n) + "\n"
+        
+        
         if self.prev_stmt_type == PrevStmtType.CondExpr:
             if self.assume_stmts == []:
-                return "\n".join(
-                    [ExtractInlineTest.node_to_source_code(n) for n in self.given_stmts]
+                return prefix.join(
+                    + [ExtractInlineTest.node_to_source_code(n) for n in self.given_stmts]
                     + [ExtractInlineTest.node_to_source_code(n) for n in self.check_stmts]
                 )
             else:
@@ -187,11 +200,11 @@ class InlineTest:
                 )
                 assume_statement = self.assume_stmts[0]
                 assume_node = self.build_assume_node(assume_statement, body_nodes)
-                return "\n".join(ExtractInlineTest.node_to_source_code(assume_node))
+                return prefix.join(ExtractInlineTest.node_to_source_code(assume_node))
 
         else:
             if self.assume_stmts is None or self.assume_stmts == []:
-                return "\n".join(
+                return prefix.join(
                     [ExtractInlineTest.node_to_source_code(n) for n in self.given_stmts]
                     + [ExtractInlineTest.node_to_source_code(n) for n in self.previous_stmts]
                     + [ExtractInlineTest.node_to_source_code(n) for n in self.check_stmts]
@@ -202,7 +215,7 @@ class InlineTest:
                 )
                 assume_statement = self.assume_stmts[0]
                 assume_node = self.build_assume_node(assume_statement, body_nodes)
-                return "\n".join([ExtractInlineTest.node_to_source_code(assume_node)])
+                return prefix.join([ExtractInlineTest.node_to_source_code(assume_node)])
 
     def build_assume_node(self, assumption_node, body_nodes):
         return ast.If(assumption_node, body_nodes, [])
@@ -252,7 +265,7 @@ class TimeoutException(Exception):
 ## InlineTest Parser
 ######################################################################
 class InlinetestParser:
-    def parse(self, obj, globs: None):
+    def parse(self, obj, globs: None):       
         # obj = open(self.file_path, "r").read():
         if isinstance(obj, ModuleType):
             tree = ast.parse(open(obj.__file__, "r").read())
@@ -297,7 +310,7 @@ class ExtractInlineTest(ast.NodeTransformer):
     arg_devices_str = "devices"
     diff_test_str = "diff_test"
     assume = "assume"
-    inline_module_imported = False
+    
     import_str = "import"
     from_str = "from"
     as_str = "as"
@@ -389,7 +402,7 @@ class ExtractInlineTest(ast.NodeTransformer):
                 import_calls.append(child)
             elif isinstance(child, ast.ImportFrom):
                 import_from_calls.append(child)
-                
+
     def parse_constructor(self, node):
         """
         Parse a constructor call.
@@ -558,7 +571,6 @@ class ExtractInlineTest(ast.NodeTransformer):
                                 getattr(arg, value_prop_name))
                     
                    
-                    ## Match implementation of above conditional tree; commented since Python < 3.10 does not support match
                     
                     # match arg_idx:
                     #     case ConstrArgs.REPEATED:
@@ -581,7 +593,9 @@ class ExtractInlineTest(ast.NodeTransformer):
                     raise MalformedException(
                         f"inline test: {self.class_name_str}() accepts {NUM_OF_ARGUMENTS} arguments. 'test_name' must be a string constant, 'parameterized' must be a boolean constant, 'repeated' must be a positive integer, 'tag' must be a list of string, 'timeout' must be a positive float"
                     )
-              
+                    #raise MalformedException("Argument " + str(index) + " incorrectly formatted. Argument should be a " + ConstrArgs.expected_ast_val_args[index].type())
+
+
     def parameterized_inline_tests_init(self, node: ast.List):
         if not self.cur_inline_test.parameterized_inline_tests:
             self.cur_inline_test.parameterized_inline_tests = [InlineTest() for _ in range(len(node.elts))]
@@ -1141,8 +1155,17 @@ class ExtractInlineTest(ast.NodeTransformer):
         self.cur_inline_test.previous_stmts = new_statements
         self.cur_inline_test.check_stmts = comparisons
         
-
+    def parse_import(self, node):
+        # TODO: Differentiate between import, from import, and import alias
+        import_node = ast.Import(
+            names=[
+                ast.alias(name=node)
+            ]
+        )
+        return import_node
     
+    def parse_import_from(self, node):
+        pass
 
     def build_fail(self):
         equal_node = ast.Compare(
@@ -1183,6 +1206,7 @@ class ExtractInlineTest(ast.NodeTransformer):
             return stmt
         else:
             return node
+            
 
     def parse_parameterized_test(self):
         for index, parameterized_test in enumerate(self.cur_inline_test.parameterized_inline_tests):
@@ -1219,24 +1243,11 @@ class ExtractInlineTest(ast.NodeTransformer):
                 self.parse_assume(call)
                 inline_test_call_index += 1
 
+        # "given(a, 1)"
         for call in inline_test_calls[inline_test_call_index:]:
-            if isinstance(call.func, ast.Attribute):
-                if call.func.attr == self.given_str:
-                    self.parse_given(call)
-                    inline_test_call_index += 1
-                elif call.func.attr == self.diff_given_str:
-                    self.parse_diff_given(call)
-                    inline_test_call_index += 1
-                
-                # match call.func.attr:
-                #     # "given(a, 1)"
-                #     case self.given_str:
-                #         self.parse_given(call)
-                #         inline_test_call_index += 1
-                #      # "diff_given(devices, ["cpu", "cuda"])"
-                #     case self.diff_given_str:
-                #         self.parse_diff_given(call)
-                #         inline_test_call_index += 1
+            if isinstance(call.func, ast.Attribute) and call.func.attr == self.given_str:
+                self.parse_given(call)
+                inline_test_call_index += 1
             else:
                 break
 
@@ -1244,6 +1255,7 @@ class ExtractInlineTest(ast.NodeTransformer):
             self.cur_inline_test.import_stmts.append(import_stmt)
         for import_stmt in import_from_calls:
             self.cur_inline_test.import_stmts.append(import_stmt)
+
 
         # "check_eq" or "check_true" or "check_false" or "check_neq"
         for call in inline_test_calls[inline_test_call_index:]:
@@ -1307,6 +1319,7 @@ class ExtractInlineTest(ast.NodeTransformer):
 ## InlineTest Finder
 ######################################################################
 class InlineTestFinder:
+    # Finder should NOT store any global variables
     def __init__(self, parser=InlinetestParser(), recurse=True, exclude_empty=True):
         self._parser = parser
         self._recurse = recurse
@@ -1351,7 +1364,14 @@ class InlineTestFinder:
             pass
         return inspect.isroutine(maybe_routine)
 
-    def find(self, obj, module=None, globs=None, extraglobs=None):
+    # def find_imports(self, obj, module=None):
+    #     if module is False:
+    #         module = None
+    #     elif module is None:
+    #         module = inspect.getmodule(obj)
+        
+
+    def find(self, obj, module=None, globs=None, extraglobs=None, imports=None):
         # Find the module that contains the given object (if obj is
         # a module, then module=obj.).
         if module is False:
@@ -1372,15 +1392,23 @@ class InlineTestFinder:
         if "__name__" not in globs:
             globs["__name__"] = "__main__"  # provide a default module name
 
+        # Find intersection between loaded modules and module imports
+        # if imports is None:
+        #     imports = set(sys.modules) & set(globs)
+        # else:
+        #     imports = imports.copy()
+
         # Recursively explore `obj`, extracting InlineTests.
         tests = []
-        self._find(tests, obj, module, globs, {})
+        self._find(tests, obj, module, globs, imports, {})
         return tests
 
-    def _find(self, tests, obj, module, globs, seen):
+    def _find(self, tests, obj, module, globs, imports, seen):
         if id(obj) in seen:
             return
         seen[id(obj)] = 1
+        
+        
         # Find a test for this object, and add it to the list of tests.
         test = self._parser.parse(obj, globs)
         if test is not None:
@@ -1392,7 +1420,7 @@ class InlineTestFinder:
 
                 # Recurse to functions & classes.
                 if (self._is_routine(val) or inspect.isclass(val)) and self._from_module(module, val):
-                    self._find(tests, val, module, globs, seen)
+                    self._find(tests, val, module, globs, imports, seen)
 
         # Look for tests in a class's contained objects.
         if inspect.isclass(obj) and self._recurse:
@@ -1406,7 +1434,7 @@ class InlineTestFinder:
                     module, val
                 ):
                     valname = "%s" % (valname)
-                    self._find(tests, val, module, globs, seen)
+                    self._find(tests, val, module, globs, imports, seen)
 
 
 ######################################################################
@@ -1414,9 +1442,10 @@ class InlineTestFinder:
 ######################################################################
 class InlineTestRunner:
     def run(self, test: InlineTest, out: List) -> None:
-        test_str = test.to_test()
+        test_str = test.write_imports()
+        test_str += test.to_test()
         print(test_str)
-        tree = ast.parse(test.to_test())
+        tree = ast.parse(test_str)
         codeobj = compile(tree, filename="<ast>", mode="exec")
         start_time = time.time()
         if test.timeout > 0:
@@ -1552,6 +1581,10 @@ class InlinetestModule(pytest.Module):
 
         group_tags = self.config.getoption("inlinetest_group", default=None)
         order_tags = self.config.getoption("inlinetest_order", default=None)
+
+        # TODO: import all modules through the finder first before extracting inline tests
+        # - Create ast for all imports
+        # - If a function references an import, then include the imported library reference in the ast
 
         for test_list in finder.find(module):
             # reorder the list if there are tests to be ordered
