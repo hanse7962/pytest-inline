@@ -159,6 +159,7 @@ class InlineTest:
         self.check_stmts = []
         self.given_stmts = []
         self.previous_stmts = []
+        self.import_stmts = []
         self.prev_stmt_type = PrevStmtType.StmtExpr
         # the line number of test statement
         self.lineno = 0
@@ -174,11 +175,23 @@ class InlineTest:
         self.devices = None
         self.globs = {}
 
+    def write_imports(self):
+        import_str = ""
+        for n in self.import_stmts:
+              import_str += ExtractInlineTest.node_to_source_code(n) + "\n"
+        return import_str
+
     def to_test(self):
+        prefix = "\n"
+        
+        # for n in self.import_stmts:
+        #     import_str += ExtractInlineTest.node_to_source_code(n) + "\n"
+        
+        
         if self.prev_stmt_type == PrevStmtType.CondExpr:
             if self.assume_stmts == []:
-                return "\n".join(
-                    [ExtractInlineTest.node_to_source_code(n) for n in self.given_stmts]
+                return prefix.join(
+                    + [ExtractInlineTest.node_to_source_code(n) for n in self.given_stmts]
                     + [ExtractInlineTest.node_to_source_code(n) for n in self.check_stmts]
                 )
             else:
@@ -187,11 +200,11 @@ class InlineTest:
                 )
                 assume_statement = self.assume_stmts[0]
                 assume_node = self.build_assume_node(assume_statement, body_nodes)
-                return "\n".join(ExtractInlineTest.node_to_source_code(assume_node))
+                return prefix.join(ExtractInlineTest.node_to_source_code(assume_node))
 
         else:
             if self.assume_stmts is None or self.assume_stmts == []:
-                return "\n".join(
+                return prefix.join(
                     [ExtractInlineTest.node_to_source_code(n) for n in self.given_stmts]
                     + [ExtractInlineTest.node_to_source_code(n) for n in self.previous_stmts]
                     + [ExtractInlineTest.node_to_source_code(n) for n in self.check_stmts]
@@ -202,7 +215,7 @@ class InlineTest:
                 )
                 assume_statement = self.assume_stmts[0]
                 assume_node = self.build_assume_node(assume_statement, body_nodes)
-                return "\n".join([ExtractInlineTest.node_to_source_code(assume_node)])
+                return prefix.join([ExtractInlineTest.node_to_source_code(assume_node)])
 
     def build_assume_node(self, assumption_node, body_nodes):
         return ast.If(assumption_node, body_nodes, [])
@@ -252,7 +265,7 @@ class TimeoutException(Exception):
 ## InlineTest Parser
 ######################################################################
 class InlinetestParser:
-    def parse(self, obj, globs: None):
+    def parse(self, obj, globs: None):       
         # obj = open(self.file_path, "r").read():
         if isinstance(obj, ModuleType):
             tree = ast.parse(open(obj.__file__, "r").read())
@@ -294,9 +307,10 @@ class ExtractInlineTest(ast.NodeTransformer):
     arg_tag_str = "tag"
     arg_disabled_str = "disabled"
     arg_timeout_str = "timeout"
-
+    arg_devices_str = "devices"
+    diff_test_str = "diff_test"
     assume = "assume"
-    inline_module_imported = False
+    
     import_str = "import"
     from_str = "from"
     as_str = "as"
@@ -388,7 +402,7 @@ class ExtractInlineTest(ast.NodeTransformer):
                 import_calls.append(child)
             elif isinstance(child, ast.ImportFrom):
                 import_from_calls.append(child)
-                
+
     def parse_constructor(self, node):
         """
         Parse a constructor call.
@@ -412,9 +426,10 @@ class ExtractInlineTest(ast.NodeTransformer):
             self.arg_tag_str : 3,
             self.arg_disabled_str : 4,
             self.arg_timeout_str : 5,
+            self.arg_devices_str : 6
         }
         
-        NUM_OF_ARGUMENTS = 6
+        NUM_OF_ARGUMENTS = 7
         if len(node.args) + len(node.keywords) <= NUM_OF_ARGUMENTS:
             # positional arguments
             self.parse_constructor_args(node.args)
@@ -445,6 +460,7 @@ class ExtractInlineTest(ast.NodeTransformer):
             TAG_STR = 3
             DISABLED = 4
             TIMEOUT = 5
+            DEVICES = 6
         
         property_names = {
             ConstrArgs.TEST_NAME : "test_name",
@@ -453,6 +469,7 @@ class ExtractInlineTest(ast.NodeTransformer):
             ConstrArgs.TAG_STR : "tag",
             ConstrArgs.DISABLED : "disabled",
             ConstrArgs.TIMEOUT : "timeout",
+            ConstrArgs.DEVICES : "devices"
         }
             
         pre_38_val_names = {
@@ -462,6 +479,7 @@ class ExtractInlineTest(ast.NodeTransformer):
             ConstrArgs.TAG_STR : "s",
             ConstrArgs.DISABLED : "value",
             ConstrArgs.TIMEOUT : "n",
+            ConstrArgs.DEVICES : ""
         }
                 
         pre_38_expec_ast_arg_type = {
@@ -489,9 +507,10 @@ class ExtractInlineTest(ast.NodeTransformer):
             ConstrArgs.TAG_STR : [None],
             ConstrArgs.DISABLED : [bool],
             ConstrArgs.TIMEOUT : [float, int],
+            ConstrArgs.DEVICES : [str]
         }
         
-        NUM_OF_ARGUMENTS = 6
+        NUM_OF_ARGUMENTS = 7
         
         # Arguments organized by expected ast type, value type, and index in that order
         for index, arg in enumerate(args):
@@ -499,7 +518,16 @@ class ExtractInlineTest(ast.NodeTransformer):
             if arg == None:
                 continue
             
-
+            # Devices are not referenced in versions before 3.8; all other arguments can be from any version
+            if index == ConstrArgs.DEVICES and isinstance(arg, ast.List):
+                devices = []
+                for elt in arg.elts:
+                    if not (isinstance(elt, ast.Constant) and isinstance(elt.value, str)):
+                        raise MalformedException("devices can only be List of string")
+                    if elt.value not in {"cpu", "cuda", "mps"}:
+                        raise MalformedException(f"Invalid device: {elt.value}. Must be one of ['cpu', 'cuda', 'mps']")
+                    devices.append(elt.value)
+                self.cur_inline_test.devices = devices
             # Assumes version is past 3.8, no explicit references to ast.Constant before 3.8
             else:
                 corr_arg_type = False
@@ -519,30 +547,22 @@ class ExtractInlineTest(ast.NodeTransformer):
                     if arg_type == None:
                         corr_val_type = True
                         break
-                    if isinstance(getattr(arg, value_prop_name), arg_type):
+                    if isinstance(arg.value, arg_type):
                         corr_val_type = True
                         break
                 
                 if corr_val_type and corr_arg_type:
                     # Accounts for additional checks for REPEATED and TAG_STR arguments
                     if arg_idx == ConstrArgs.REPEATED:
-                        value = getattr(arg, value_prop_name)
-                        if value <= 0:
+                        if arg.value <= 0:
                             raise MalformedException(f"inline test: {self.arg_repeated_str} must be greater than 0")
-                        self.cur_inline_test.repeated = value
+                        self.cur_inline_test.repeated = getattr(arg, value_prop_name)
                     elif arg_idx == ConstrArgs.TAG_STR:
                         tags = []
-                        
-                        if sys.version_info < (3, 8, 0):
-                            elt_type = ast.Str
-                        else:
-                            elt_type = ast.Constant
-                        
                         for elt in arg.elts:
-                            value = getattr(elt, value_prop_name)
-                            if (not isinstance(elt, elt_type) and isinstance(value, str)):
+                            if not (isinstance(elt, ast.Constant) and isinstance(elt.value, str)):
                                 raise MalformedException(f"tag can only be List of string")
-                            tags.append(value)
+                            tags.append(getattr(elt, value_prop_name))
                         self.cur_inline_test.tag = tags
                     # For non-special cases, set the attribute defined by the dictionary
                     else:
@@ -551,7 +571,6 @@ class ExtractInlineTest(ast.NodeTransformer):
                                 getattr(arg, value_prop_name))
                     
                    
-                    ## Match implementation of above conditional tree; commented since Python < 3.10 does not support match
                     
                     # match arg_idx:
                     #     case ConstrArgs.REPEATED:
@@ -574,7 +593,9 @@ class ExtractInlineTest(ast.NodeTransformer):
                     raise MalformedException(
                         f"inline test: {self.class_name_str}() accepts {NUM_OF_ARGUMENTS} arguments. 'test_name' must be a string constant, 'parameterized' must be a boolean constant, 'repeated' must be a positive integer, 'tag' must be a list of string, 'timeout' must be a positive float"
                     )
-              
+                    #raise MalformedException("Argument " + str(index) + " incorrectly formatted. Argument should be a " + ConstrArgs.expected_ast_val_args[index].type())
+
+
     def parameterized_inline_tests_init(self, node: ast.List):
         if not self.cur_inline_test.parameterized_inline_tests:
             self.cur_inline_test.parameterized_inline_tests = [InlineTest() for _ in range(len(node.elts))]
@@ -912,6 +933,240 @@ class ExtractInlineTest(ast.NodeTransformer):
         else:
             raise MalformedException("inline test: invalid check_not_same(), expected 2 args")
     
+    def parse_diff_test(self, node):
+        if not self.cur_inline_test.devices:
+            raise MalformedException("diff_test can only be used with the 'devices' parameter.")
+
+        if len(node.args) != 1:
+            raise MalformedException("diff_test() requires exactly 1 argument.")
+
+        output_node = self.parse_group(node.args[0])
+        
+        # Get the original operation
+        original_op = None
+        for stmt in self.cur_inline_test.previous_stmts:
+            if isinstance(stmt, ast.Assign) and stmt.targets[0].id == output_node.id:
+                original_op = stmt.value
+                break
+        
+        if not original_op:
+            raise MalformedException("Could not find original operation for diff_test")
+        
+        # Create our new statements
+        new_statements = []
+        device_outputs = []
+        
+        # Import necessary modules for seed setting - Always add these
+        # Import random module
+        import_random = ast.ImportFrom(
+            module='random',
+            names=[ast.alias(name='seed', asname=None)],
+            level=0
+        )
+        new_statements.append(import_random)
+        
+        # Import numpy.random
+        import_np = ast.ImportFrom(
+            module='numpy',
+            names=[ast.alias(name='random', asname='np_random')],
+            level=0
+        )
+        new_statements.append(import_np)
+        
+        # Create seed function - Always add this
+        seed_func_def = ast.FunctionDef(
+            name='set_random_seed',
+            args=ast.arguments(
+                posonlyargs=[],
+                args=[ast.arg(arg='seed_value', annotation=None)],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[]
+            ),
+            body=[
+                ast.Expr(
+                    value=ast.Call(
+                        func=ast.Name(id='seed', ctx=ast.Load()),
+                        args=[ast.Name(id='seed_value', ctx=ast.Load())],
+                        keywords=[]
+                    )
+                ),
+                ast.Expr(
+                    value=ast.Call(
+                        func=ast.Attribute(
+                            value=ast.Name(id='torch', ctx=ast.Load()),
+                            attr='manual_seed'
+                        ),
+                        args=[ast.Name(id='seed_value', ctx=ast.Load())],
+                        keywords=[]
+                    )
+                ),
+                ast.Expr(
+                    value=ast.Call(
+                        func=ast.Attribute(
+                            value=ast.Name(id='np_random', ctx=ast.Load()),
+                            attr='seed'
+                        ),
+                        args=[ast.Name(id='seed_value', ctx=ast.Load())],
+                        keywords=[]
+                    )
+                )
+            ],
+            decorator_list=[],
+            returns=None
+        )
+        new_statements.append(seed_func_def)
+
+        # Process input tensors
+        for given_stmt in self.cur_inline_test.given_stmts:
+            input_var = given_stmt.targets[0].id
+            ref_var = f"{input_var}_ref"
+            
+            # Always clone inputs for in-place operations
+            new_statements.append(
+                ast.Assign(
+                    targets=[ast.Name(id=ref_var, ctx=ast.Store())],
+                    value=ast.Call(
+                        func=ast.Attribute(
+                            value=given_stmt.value,
+                            attr="clone"
+                        ),
+                        args=[],
+                        keywords=[]
+                    )
+                )
+            )
+            
+            # Create device-specific versions
+            for device in self.cur_inline_test.devices:
+                device_var = f"{input_var}_{device}"
+                
+                new_statements.append(
+                    ast.Assign(
+                        targets=[ast.Name(id=device_var, ctx=ast.Store())],
+                        value=ast.Call(
+                            func=ast.Attribute(
+                                value=ast.Name(id=ref_var, ctx=ast.Load()),
+                                attr="to"
+                            ),
+                            args=[ast.Constant(value=device)],
+                            keywords=[]
+                        )
+                    )
+                )
+        
+        # Create device-specific operations
+        device_input_map = {device: {} for device in self.cur_inline_test.devices}
+        for device in self.cur_inline_test.devices:
+            for given_stmt in self.cur_inline_test.given_stmts:
+                input_var = given_stmt.targets[0].id
+                device_input_map[device][input_var] = f"{input_var}_{device}"
+            
+            # Always set seed before each device operation - no condition check
+            new_statements.append(
+                ast.Expr(
+                    value=ast.Call(
+                        func=ast.Name(id='set_random_seed', ctx=ast.Load()),
+                        args=[ast.Constant(value=42)],  # Use constant seed 42
+                        keywords=[]
+                    )
+                )
+            )
+                
+            device_op = copy.deepcopy(original_op)
+            
+            # Replace input references
+            class ReplaceInputs(ast.NodeTransformer):
+                def visit_Name(self, node):
+                    if node.id in device_input_map[device]:
+                        return ast.Name(id=device_input_map[device][node.id], ctx=node.ctx)
+                    return node
+            
+            device_op = ReplaceInputs().visit(device_op)
+            device_output = f"output_{device}"
+            
+            new_statements.append(
+                ast.Assign(
+                    targets=[ast.Name(id=device_output, ctx=ast.Store())],
+                    value=device_op
+                )
+            )
+            device_outputs.append(device_output)
+        
+        # Standard comparison method for all operations - no condition check
+        comparisons = []
+        for i in range(len(device_outputs) - 1):
+            dev1 = device_outputs[i]
+            dev2 = device_outputs[i + 1]
+            
+            dev1_cpu = f"{dev1}_cpu"
+            dev2_cpu = f"{dev2}_cpu"
+            
+            # Move outputs back to CPU for comparison
+            new_statements.append(
+                ast.Assign(
+                    targets=[ast.Name(id=dev1_cpu, ctx=ast.Store())],
+                    value=ast.Call(
+                        func=ast.Attribute(
+                            value=ast.Name(id=dev1, ctx=ast.Load()),
+                            attr="to"
+                        ),
+                        args=[ast.Constant(value="cpu")],
+                        keywords=[]
+                    )
+                )
+            )
+            
+            new_statements.append(
+                ast.Assign(
+                    targets=[ast.Name(id=dev2_cpu, ctx=ast.Store())],
+                    value=ast.Call(
+                        func=ast.Attribute(
+                            value=ast.Name(id=dev2, ctx=ast.Load()),
+                            attr="to"
+                        ),
+                        args=[ast.Constant(value="cpu")],
+                        keywords=[]
+                    )
+                )
+            )
+            
+            # Standard allclose comparison
+            comparison = self.build_assert_eq(
+                ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id=dev1_cpu, ctx=ast.Load()),
+                        attr="allclose"
+                    ),
+                    args=[
+                        ast.Name(id=dev2_cpu, ctx=ast.Load())
+                    ],
+                    keywords=[
+                        ast.keyword(arg="rtol", value=ast.Constant(value=1e-4)),
+                        ast.keyword(arg="atol", value=ast.Constant(value=1e-4)),
+                        ast.keyword(arg="equal_nan", value=ast.Constant(value=True))
+                    ]
+                ),
+                ast.Constant(value=True)
+            )
+            comparisons.append(comparison)
+        
+        # Replace statements
+        self.cur_inline_test.previous_stmts = new_statements
+        self.cur_inline_test.check_stmts = comparisons
+        
+    def parse_import(self, node):
+        # TODO: Differentiate between import, from import, and import alias
+        import_node = ast.Import(
+            names=[
+                ast.alias(name=node)
+            ]
+        )
+        return import_node
+    
+    def parse_import_from(self, node):
+        pass
+
     def build_fail(self):
         equal_node = ast.Compare(
             left=ast.Constant(0),
@@ -951,6 +1206,7 @@ class ExtractInlineTest(ast.NodeTransformer):
             return stmt
         else:
             return node
+            
 
     def parse_parameterized_test(self):
         for index, parameterized_test in enumerate(self.cur_inline_test.parameterized_inline_tests):
@@ -987,24 +1243,11 @@ class ExtractInlineTest(ast.NodeTransformer):
                 self.parse_assume(call)
                 inline_test_call_index += 1
 
+        # "given(a, 1)"
         for call in inline_test_calls[inline_test_call_index:]:
-            if isinstance(call.func, ast.Attribute):
-                if call.func.attr == self.given_str:
-                    self.parse_given(call)
-                    inline_test_call_index += 1
-                elif call.func.attr == self.diff_given_str:
-                    self.parse_diff_given(call)
-                    inline_test_call_index += 1
-                
-                # match call.func.attr:
-                #     # "given(a, 1)"
-                #     case self.given_str:
-                #         self.parse_given(call)
-                #         inline_test_call_index += 1
-                #      # "diff_given(devices, ["cpu", "cuda"])"
-                #     case self.diff_given_str:
-                #         self.parse_diff_given(call)
-                #         inline_test_call_index += 1
+            if isinstance(call.func, ast.Attribute) and call.func.attr == self.given_str:
+                self.parse_given(call)
+                inline_test_call_index += 1
             else:
                 break
 
@@ -1012,6 +1255,7 @@ class ExtractInlineTest(ast.NodeTransformer):
             self.cur_inline_test.import_stmts.append(import_stmt)
         for import_stmt in import_from_calls:
             self.cur_inline_test.import_stmts.append(import_stmt)
+
 
         # "check_eq" or "check_true" or "check_false" or "check_neq"
         for call in inline_test_calls[inline_test_call_index:]:
@@ -1035,11 +1279,13 @@ class ExtractInlineTest(ast.NodeTransformer):
                 self.parse_check_same(call)
             elif call.func.attr == self.check_not_same:
                 self.parse_check_not_same(call)
+            elif call.func.attr == self.diff_test_str:
+                self.parse_diff_test(call)
             elif call.func.attr == self.fail_str:
                 self.parse_fail(call)
             elif call.func.attr == self.given_str:
                 raise MalformedException(
-                    f"inline test: given() must be called before check_eq()/check_true()/check_false()"
+                    f"inline test: given() must be called before check_eq()/check_true()/check_false()/diff_test()"
                 )
             else:
                 raise MalformedException(f"inline test: invalid function call {self.node_to_source_code(call.func)}")
@@ -1073,6 +1319,7 @@ class ExtractInlineTest(ast.NodeTransformer):
 ## InlineTest Finder
 ######################################################################
 class InlineTestFinder:
+    # Finder should NOT store any global variables
     def __init__(self, parser=InlinetestParser(), recurse=True, exclude_empty=True):
         self._parser = parser
         self._recurse = recurse
@@ -1117,7 +1364,14 @@ class InlineTestFinder:
             pass
         return inspect.isroutine(maybe_routine)
 
-    def find(self, obj, module=None, globs=None, extraglobs=None):
+    # def find_imports(self, obj, module=None):
+    #     if module is False:
+    #         module = None
+    #     elif module is None:
+    #         module = inspect.getmodule(obj)
+        
+
+    def find(self, obj, module=None, globs=None, extraglobs=None, imports=None):
         # Find the module that contains the given object (if obj is
         # a module, then module=obj.).
         if module is False:
@@ -1138,15 +1392,23 @@ class InlineTestFinder:
         if "__name__" not in globs:
             globs["__name__"] = "__main__"  # provide a default module name
 
+        # Find intersection between loaded modules and module imports
+        # if imports is None:
+        #     imports = set(sys.modules) & set(globs)
+        # else:
+        #     imports = imports.copy()
+
         # Recursively explore `obj`, extracting InlineTests.
         tests = []
-        self._find(tests, obj, module, globs, {})
+        self._find(tests, obj, module, globs, imports, {})
         return tests
 
-    def _find(self, tests, obj, module, globs, seen):
+    def _find(self, tests, obj, module, globs, imports, seen):
         if id(obj) in seen:
             return
         seen[id(obj)] = 1
+        
+        
         # Find a test for this object, and add it to the list of tests.
         test = self._parser.parse(obj, globs)
         if test is not None:
@@ -1158,7 +1420,7 @@ class InlineTestFinder:
 
                 # Recurse to functions & classes.
                 if (self._is_routine(val) or inspect.isclass(val)) and self._from_module(module, val):
-                    self._find(tests, val, module, globs, seen)
+                    self._find(tests, val, module, globs, imports, seen)
 
         # Look for tests in a class's contained objects.
         if inspect.isclass(obj) and self._recurse:
@@ -1172,7 +1434,7 @@ class InlineTestFinder:
                     module, val
                 ):
                     valname = "%s" % (valname)
-                    self._find(tests, val, module, globs, seen)
+                    self._find(tests, val, module, globs, imports, seen)
 
 
 ######################################################################
@@ -1180,7 +1442,10 @@ class InlineTestFinder:
 ######################################################################
 class InlineTestRunner:
     def run(self, test: InlineTest, out: List) -> None:
-        tree = ast.parse(test.to_test())
+        test_str = test.write_imports()
+        test_str += test.to_test()
+        print(test_str)
+        tree = ast.parse(test_str)
         codeobj = compile(tree, filename="<ast>", mode="exec")
         start_time = time.time()
         if test.timeout > 0:
@@ -1316,6 +1581,10 @@ class InlinetestModule(pytest.Module):
 
         group_tags = self.config.getoption("inlinetest_group", default=None)
         order_tags = self.config.getoption("inlinetest_order", default=None)
+
+        # TODO: import all modules through the finder first before extracting inline tests
+        # - Create ast for all imports
+        # - If a function references an import, then include the imported library reference in the ast
 
         for test_list in finder.find(module):
             # reorder the list if there are tests to be ordered
