@@ -2,9 +2,9 @@ from inline.plugin import InlinetestItem, MalformedException, TimeoutException
 from _pytest.pytester import Pytester
 import pytest
 
-# For testing in Spyder only
-if __name__ == "__main__":
-    pytest.main(['-v', '-s']) 
+# # For testing in Spyder only
+# if __name__ == "__main__":
+#     pytest.main(['-v', '-s']) 
 
 
 # pytest -p pytester
