@@ -159,6 +159,7 @@ class InlineTest:
         self.check_stmts = []
         self.given_stmts = []
         self.previous_stmts = []
+        self.import_stmts = []
         self.prev_stmt_type = PrevStmtType.StmtExpr
         # the line number of test statement
         self.lineno = 0
@@ -174,10 +175,18 @@ class InlineTest:
         self.devices = None
         self.globs = {}
 
+    def write_imports(self):
+        import_str = ""
+        for n in self.import_stmts:
+              import_str += ExtractInlineTest.node_to_source_code(n) + "\n"
+        return import_str
+
     def to_test(self):
+        prefix = "\n"
+        
         if self.prev_stmt_type == PrevStmtType.CondExpr:
             if self.assume_stmts == []:
-                return "\n".join(
+                return prefix.join(
                     [ExtractInlineTest.node_to_source_code(n) for n in self.given_stmts]
                     + [ExtractInlineTest.node_to_source_code(n) for n in self.check_stmts]
                 )
@@ -187,11 +196,11 @@ class InlineTest:
                 )
                 assume_statement = self.assume_stmts[0]
                 assume_node = self.build_assume_node(assume_statement, body_nodes)
-                return "\n".join(ExtractInlineTest.node_to_source_code(assume_node))
+                return prefix.join(ExtractInlineTest.node_to_source_code(assume_node))
 
         else:
             if self.assume_stmts is None or self.assume_stmts == []:
-                return "\n".join(
+                return prefix.join(
                     [ExtractInlineTest.node_to_source_code(n) for n in self.given_stmts]
                     + [ExtractInlineTest.node_to_source_code(n) for n in self.previous_stmts]
                     + [ExtractInlineTest.node_to_source_code(n) for n in self.check_stmts]
@@ -202,7 +211,7 @@ class InlineTest:
                 )
                 assume_statement = self.assume_stmts[0]
                 assume_node = self.build_assume_node(assume_statement, body_nodes)
-                return "\n".join([ExtractInlineTest.node_to_source_code(assume_node)])
+                return prefix.join([ExtractInlineTest.node_to_source_code(assume_node)])
 
     def build_assume_node(self, assumption_node, body_nodes):
         return ast.If(assumption_node, body_nodes, [])
@@ -296,6 +305,11 @@ class ExtractInlineTest(ast.NodeTransformer):
     arg_timeout_str = "timeout"
 
     assume = "assume"
+    
+    import_str = "import"
+    from_str = "from"
+    as_str = "as"
+    
     inline_module_imported = False
 
     def __init__(self):
@@ -359,6 +373,23 @@ class ExtractInlineTest(ast.NodeTransformer):
         elif isinstance(node, ast.Call):
             inline_test_calls.append(node)
             self.collect_inline_test_calls(node.func, inline_test_calls)
+
+    def collect_import_calls(self, node, import_calls: List[ast.Import], import_from_calls: List[ast.ImportFrom]):
+        """
+        collect all import calls in the node (should be done first)
+        """
+
+        while not isinstance(node, ast.Module) and node.parent != None:
+            node = node.parent
+       
+        if not isinstance(node, ast.Module):
+            return
+            
+        for child in node.children:
+            if isinstance(child, ast.Import):
+                import_calls.append(child)
+            elif isinstance(child, ast.ImportFrom):
+                import_from_calls.append(child)
 
     def parse_constructor(self, node):
         """
@@ -931,8 +962,13 @@ class ExtractInlineTest(ast.NodeTransformer):
             parameterized_test.test_name = self.cur_inline_test.test_name + "_" + str(index)
 
     def parse_inline_test(self, node):
-        inline_test_calls = []
+        import_calls = []
+        import_from_calls = []
+        inline_test_calls = [] 
+        
         self.collect_inline_test_calls(node, inline_test_calls)
+        self.collect_import_calls(node, import_calls, import_from_calls)
+        
         inline_test_calls.reverse()
 
         if len(inline_test_calls) <= 1:
@@ -953,13 +989,19 @@ class ExtractInlineTest(ast.NodeTransformer):
                 self.parse_assume(call)
                 inline_test_call_index += 1
 
-        # "given(a, 1)"
         for call in inline_test_calls[inline_test_call_index:]:
-            if isinstance(call.func, ast.Attribute) and call.func.attr == self.given_str:
-                self.parse_given(call)
-                inline_test_call_index += 1
+            if isinstance(call.func, ast.Attribute):
+                if call.func.attr == self.given_str:
+                    self.parse_given(call)
+                    inline_test_call_index += 1
             else:
                 break
+
+        for import_stmt in import_calls:
+            self.cur_inline_test.import_stmts.append(import_stmt)
+        for import_stmt in import_from_calls:
+            self.cur_inline_test.import_stmts.append(import_stmt)
+
 
         # "check_eq" or "check_true" or "check_false" or "check_neq"
         for call in inline_test_calls[inline_test_call_index:]:
