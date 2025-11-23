@@ -603,15 +603,22 @@ class ExtractInlineTest(ast.NodeTransformer):
         PROPERTY = 0
         VALUES = 1
         
+        if sys.version_info >= (3, 8, 0):
+            attr_name = "value"
+        else:
+            attr_name = "s"
+        
+        
         if len(node.args) == 2:
             if self.cur_inline_test.parameterized:
                 raise MalformedException("inline test: Parameterized inline tests currently do not support differential tests.")
             else:
                 devices = []
                 for elt in node.args[VALUES].elts:
-                    if elt.value not in {"cpu", "cuda", "mps"}:
+                    value = getattr(elt, attr_name)
+                    if value not in {"cpu", "cuda", "mps"}:
                         raise MalformedException(f"Invalid device: {elt.value}. Must be one of ['cpu', 'cuda', 'mps']")
-                    devices.append(elt.value)
+                    devices.append(value)
                 setattr(self.cur_inline_test, node.args[PROPERTY].id, devices)
         else:
             raise MalformedException("inline test: invalid diff_given(), expected 2 args")
