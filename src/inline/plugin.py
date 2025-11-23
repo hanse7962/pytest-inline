@@ -1231,14 +1231,14 @@ class ExtractInlineTest(ast.NodeTransformer):
             if isinstance(call.func, ast.Attribute) and call.func.attr == self.assume:
                 self.parse_assume(call)
                 inline_test_call_index += 1
-            elif call.func.attr == self.diff_given_str:
-                self.parse_diff_given(call)
-                inline_test_call_index += 1
 
         for call in inline_test_calls[inline_test_call_index:]:
             if isinstance(call.func, ast.Attribute):
                 if call.func.attr == self.given_str:
                     self.parse_given(call)
+                    inline_test_call_index += 1
+                elif call.func.attr == self.diff_given_str:
+                    self.parse_diff_given(call)
                     inline_test_call_index += 1
             else:
                 break
