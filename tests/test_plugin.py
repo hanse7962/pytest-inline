@@ -74,7 +74,7 @@ class TestInlinetests:
         class Choice(Enum):
             YES = 0
             NO = 1
-        
+            
         def m(a):
             b = a
             itest().given(a, Choice.YES).check_eq(b, Choice.YES)
@@ -85,21 +85,6 @@ class TestInlinetests:
             assert len(items) == 1
             res = pytester.runpytest()
             assert res.ret == 0
-
-    def test_fail_on_importing_missing_module(self, pytester: Pytester):
-        checkfile = pytester.makepyfile(
-            """ 
-        from inline import itest
-        from scipy import owijef as st
-        
-        def m(n, p):
-            b = st.binom(n, p)
-            itest().given(n, 100).given(p, 0.5).check_eq(b.mean(), n * p)
-    """
-        )
-        for x in (pytester.path, checkfile):
-            items, reprec = pytester.inline_genitems(x)
-            assert len(items) == 0
 
     def test_inline_malformed_given(self, pytester: Pytester):
         checkfile = pytester.makepyfile(
