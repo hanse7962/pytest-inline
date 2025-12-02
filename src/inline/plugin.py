@@ -959,7 +959,7 @@ class ExtractInlineTest(ast.NodeTransformer):
 
     def parse_diff_test(self, node):
         if not self.cur_inline_test.devices:
-            raise MalformedException("diff_test can only be used with the 'devices' parameter.")
+            raise MalformedException("diff_test can only be used after calling 'diff_given()'.")
 
         if len(node.args) != 1:
             raise MalformedException("diff_test() requires exactly 1 argument.")
@@ -989,14 +989,6 @@ class ExtractInlineTest(ast.NodeTransformer):
         )
         new_statements.append(import_random)
         
-        # Import numpy.random
-        import_np = ast.ImportFrom(
-            module='numpy',
-            names=[ast.alias(name='random', asname='np_random')],
-            level=0
-        )
-        new_statements.append(import_np)
-        
         # Create seed function - Always add this
         seed_func_def = ast.FunctionDef(
             name='set_random_seed',
@@ -1014,7 +1006,23 @@ class ExtractInlineTest(ast.NodeTransformer):
                         args=[ast.Name(id='seed_value', ctx=ast.Load())],
                         keywords=[]
                     )
-                ),
+                )
+            ],
+            decorator_list=[],
+            returns=None
+        )
+        
+        # Adds expr to set pytorch seed if module installed
+        try:
+            import torch
+            
+            # Import torch
+            import_np = ast.Import(
+                names=['torch']
+            )
+            new_statements.append(import_np)
+            
+            seed_func_def.body.append(
                 ast.Expr(
                     value=ast.Call(
                         func=ast.Attribute(
@@ -1024,7 +1032,24 @@ class ExtractInlineTest(ast.NodeTransformer):
                         args=[ast.Name(id='seed_value', ctx=ast.Load())],
                         keywords=[]
                     )
-                ),
+                )
+            )
+        except ImportError as e:
+            print("PyTorch not installed. Skipping...")
+        
+        # Adds expr to set numpy seed if installed
+        try:
+            import numpy
+            
+            # Import numpy.random
+            import_np = ast.ImportFrom(
+                module='numpy',
+                names=[ast.alias(name='random', asname='np_random')],
+                level=0
+            )
+            new_statements.append(import_np)
+            
+            seed_func_def.body.append(
                 ast.Expr(
                     value=ast.Call(
                         func=ast.Attribute(
@@ -1035,10 +1060,11 @@ class ExtractInlineTest(ast.NodeTransformer):
                         keywords=[]
                     )
                 )
-            ],
-            decorator_list=[],
-            returns=None
-        )
+            )
+        except ImportError as e:
+            print("Numpy not installed. Skipping..")
+        
+        # Adds set_random_seed() function to ast
         new_statements.append(seed_func_def)
 
         # Process input tensors
