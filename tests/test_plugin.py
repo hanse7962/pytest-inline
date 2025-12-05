@@ -65,8 +65,7 @@ class TestInlinetests:
         for x in (pytester.path, checkfile):
             items, reprec = pytester.inline_genitems(x)
             assert len(items) == 0
-
-
+            
     def test_inline_malformed_given(self, pytester: Pytester):
         checkfile = pytester.makepyfile(
             """ 

@@ -1247,9 +1247,7 @@ class ExtractInlineTest(ast.NodeTransformer):
                 elif call.func.attr == self.diff_given_str:
                     self.parse_diff_given(call)
                     inline_test_call_index += 1
-            else:
-                break
-
+         
         for import_stmt in import_calls:
             self.cur_inline_test.import_stmts.append(import_stmt)
         for import_stmt in import_from_calls:
