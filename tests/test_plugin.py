@@ -32,7 +32,7 @@ class TestInlinetests:
     
     def m():
         a = random.random()
-        itest().diff_given(devices, ["cpu", "cuda"]).diff_test()
+        itest().diff_given(devices, ["cpu", "cuda"]).diff_test(a)
         return a
     """
         )

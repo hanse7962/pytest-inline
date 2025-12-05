@@ -468,15 +468,19 @@ class ExtractInlineTest(ast.NodeTransformer):
             ConstrArgs.DISABLED : "value",
             ConstrArgs.TIMEOUT : "n",
         }
-                
-        pre_38_expec_ast_arg_type = {
-            ConstrArgs.TEST_NAME : ast.Str,
-            ConstrArgs.PARAMETERIZED : ast.NameConstant,
-            ConstrArgs.REPEATED : ast.Num,
-            ConstrArgs.TAG_STR : ast.List,
-            ConstrArgs.DISABLED : ast.NameConstant,
-            ConstrArgs.TIMEOUT : ast.Num,
-        }
+
+        try:
+            pre_38_expec_ast_arg_type = {
+                ConstrArgs.TEST_NAME : ast.Str,
+                ConstrArgs.PARAMETERIZED : ast.NameConstant,
+                ConstrArgs.REPEATED : ast.Num,
+                ConstrArgs.TAG_STR : ast.List,
+                ConstrArgs.DISABLED : ast.NameConstant,
+                ConstrArgs.TIMEOUT : ast.Num,
+            }
+        # In newer versions of Python, above attributes don't exist; can ignore since past 3.8
+        except AttributeError:
+            pre_38_expec_ast_arg_type = {}
         
         expected_ast_arg_type = { 
             ConstrArgs.TEST_NAME : ast.Constant,
@@ -957,6 +961,10 @@ class ExtractInlineTest(ast.NodeTransformer):
         else:
             raise MalformedException("inline test: fail() does not expect any arguments")
 
+    # Currently, the entire function is reliant on pytorch, rather than just a specific portion,
+    # as multiple pytorch functions are called to handle device assignment
+    
+    # Goal: generalize to numpy
     def parse_diff_test(self, node):
         if not self.cur_inline_test.devices:
             raise MalformedException("diff_test can only be used after calling 'diff_given()'.")
@@ -1088,6 +1096,7 @@ class ExtractInlineTest(ast.NodeTransformer):
             )
             
             # Create device-specific versions
+            # "to" is an explicit pytorch dependency for tensor operations
             for device in self.cur_inline_test.devices:
                 device_var = f"{input_var}_{device}"
                 
